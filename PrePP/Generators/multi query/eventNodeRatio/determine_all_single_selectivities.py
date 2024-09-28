@@ -9,7 +9,8 @@ import copy
 from itertools import permutations
 
 import pickle
-
+from write_config_single import *
+import tree
 
 NETWORK = 'network'
 QUERIES = 'queries'
@@ -45,6 +46,11 @@ eventtype_to_nodes = {}
 
 with open('current_wl',  'rb') as  workloadFile:
     workload = pickle.load(workloadFile)
+    
+workload = [x.stripKL_simple() for x in workload]
+workload = [x.strip_NSEQ() for x in workload]
+
+
 
 class Query_fragment():
     def __init__(self,query, projections, node_placement, forbidden_event_types):
@@ -68,7 +74,7 @@ def get_current_section(line):
 
 def extract_network_node(line):
     if line.find('[')!=-1:
-        return list(map(int, line[line.find('[')+1:line.find(']')].split(", ")))
+        return list(map(float, line[line.find('[')+1:line.find(']')].split(", ")))
 
 
 def extract_node_events_produced(output_rates, current_node):
@@ -226,6 +232,8 @@ def extract_muse_graph_forbidden(line):
 
 
 def extract_muse_graph_selectivities(line):
+    # print(line)
+    # print("Printed")
     all_positions_of_eventcombinations = [m.start() for m in re.finditer("'", line)]
     all_positions_of_eventproducts = [m.start() for m in re.finditer(",", line)]
     all_positions_of_eventproducts = all_positions_of_eventproducts + [m.start() for m in re.finditer("}", line)]
@@ -275,11 +283,10 @@ def no_better_option_found_handling(query, upper_bounds_keys):
 
 
 
-def determine_randomized_single_selectivities_within_all_projections(query, upper_bounds_keys, global_total_query_length):  
-    
+def determine_randomized_single_selectivities_within_all_projections(query, upper_bounds_keys):  
     projection_selectivity = determine_total_query_selectivity(query)
     projection_outputrate = determine_total_query_outputrate(query)
-    projrate = projection_outputrate * projection_selectivity
+    total_outputrate = projection_outputrate * projection_selectivity
     
     outputrates = []
     for primitive_eventtype in query:
@@ -322,12 +329,16 @@ def determine_randomized_single_selectivities_within_all_projections(query, uppe
             idx = 0
 
             for random_value in first_n_random_values:
-                if projection_outputrate > 1.0:
+                if total_outputrate > 1.0:
                     #constraint 1 => if the outputrate of a projection is > 1, then all primitive events it consists of  times their single selectivities
                     #have to be bigger than one or..
                     #constraint 2 => the outputrate times the single selectivity for a given eventtype can not be bigger than the outputrate of the
                     #projection
                     if (random_value * outputrates[chosen_indices[idx]] < 1.0 and projection_outputrate > 1.0) or (random_value * outputrates[chosen_indices[idx]]) > projection_outputrate:
+                        solution_found = False
+                        break
+                else:
+                    if (random_value * outputrates[chosen_indices[idx]]) > projection_outputrate:
                         solution_found = False
                         break
                 idx += 1
@@ -439,7 +450,6 @@ def determine_all_single_selectivities_for_projection(projection):
             current_length_projections.append(possible_projection)
         
     all_different_projection_lengths.append([all_possible_projections[len(all_possible_projections)-1]])
-    
     for current_length_projections in all_different_projection_lengths:
         for projection in current_length_projections:
             upper_bound_keys = []
@@ -448,7 +458,7 @@ def determine_all_single_selectivities_for_projection(projection):
                 #determine all upper bounds of the previous length (e.g., AB, AC, for A in ABC)
                 upper_bound_keys = determine_next_smaller_dependencies(projection)
                 
-            determine_randomized_single_selectivities_within_all_projections(projection, upper_bound_keys, global_total_query_length)
+            determine_randomized_single_selectivities_within_all_projections(projection, upper_bound_keys)
 
 
 if __name__ == "__main__":
@@ -488,12 +498,13 @@ if __name__ == "__main__":
             query_network.append(query)
 
         if CURRENT_SECTION == SELECTIVITIES:
+           # print(line)
             extract_muse_graph_selectivities(line)
 
     for i in workload:
         determine_all_single_selectivities_for_projection(str(i))
     
-    print(single_selectivity_of_eventtype_within_projection)
+    #print(single_selectivity_of_eventtype_within_projection)
     
 with open('singleSelectivities', 'wb') as selectivities_file:
           pickle.dump(single_selectivity_of_eventtype_within_projection, selectivities_file)  

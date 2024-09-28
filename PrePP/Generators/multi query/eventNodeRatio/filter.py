@@ -4,6 +4,8 @@
 Created on Fri Aug 20 13:03:07 2021
 
 @author: samira
+
+Output selector related methods.
 """
 from structures import *
 
@@ -20,15 +22,15 @@ def computePromisingType(projection):
     promisingEvent = "X"
     currentSave = 0
     for primEvent in projection.leafs():
-        decomposedSum = getDecomposedTotal(primEvent, projection)
+        decomposedSum = getDecomposedTotal([primEvent], projection)
         rateSaved = (projrates[projection][1] * numETBs("", projection)) - ((longestPath * rates[primEvent] * len(IndexEventNodes[primEvent])) +  decomposedSum)
         if rateSaved > currentSave and rateSaved > 0: #saved rate must include costs for routing promising event to dest, prob not necessary 
             currentSave = rateSaved
             promisingEvent = primEvent
     if promisingEvent != "X":
-        return(promisingEvent, getDecomposed(promisingEvent, projection))
+        return(promisingEvent, getDecomposed([promisingEvent], projection))
     else:
-        return(promisingEvent, getDecomposed(promisingEvent, projection))
+        return(promisingEvent, getDecomposed([promisingEvent], projection))
         
         
 def numETBs(primEvents, projection):
@@ -38,20 +40,19 @@ def numETBs(primEvents, projection):
             count *= len(IndexEventNodes[event])
     return count
 
-def getDecomposed(primEvent, projection): #TODO: very primitive variant which only sends primitive events filtered by single selectivity, 
+def getDecomposed(primEvents, projection):
     mysum = 0
     for event in  projection.leafs():
-        if not event == primEvent:
+        if not event in primEvents:
             myKey = getKeySingleSelect(event, projection)
             mysum += singleSelectivities[myKey] * rates[event]
     return mysum        
 
-def getDecomposedTotal(primEvent, projection): #TODO: very primitive variant which only sends primitive events filtered by single selectivity, 
+def getDecomposedTotal(primEvents, projection): 
     mysum = 0
-    for event in  projection.leafs():
-        if not event == primEvent:
+    for event in [x for x in projection.leafs() if not x in primEvents]:    # implement for list of primEvents, to use during placement    
             myKey = getKeySingleSelect(event, projection)
-            mysum += singleSelectivities[myKey] * rates[event] * len(IndexEventNodes[event])
+            mysum += singleSelectivities[myKey] * rates[event] * instances[event]
     return mysum 
             
 def getKeySingleSelect(primEvent, projection):
@@ -88,30 +89,27 @@ def returnProjFilterDict(projection):
                currentKey = promising[0]
                currentRate = promising[1] 
                ProjFilterDict[projection][currentKey] = (currentRate, 0) 
-               # additionalFiltersList = additionalFilters(projection, promising[0])
-               # for myfilter in additionalFiltersList:
-               #     # here actually get all combinations
-               #     currentKey += myfilter[0]
-               #     currentRate -= (myfilter[1]/numETBs("", projection)) #CHECK: rates after filters should be computed on ETB Base to fit with ETB based placement method
-               #     ProjFilterDict[projection][currentKey] = (currentRate, 0)
+
             return ProjFilterDict    
                
-def getMaximalFilter(filterdict, proj):
-    return sorted(filterdict[proj].keys(), key = len)[0]   
-    #return sorted(filterdict[proj].keys(), key = len, reverse = True)[0]          # USED TO SUPRESS FILTER!!!
+def getMaximalFilter(filterdict, proj, *args):
+    if args:
+        if args[0] == 1:
+            return sorted(filterdict[proj].keys(), key = len)[0]   # USED TO SUPRESS FILTER!!!
+    return sorted(filterdict[proj].keys(), key = len, reverse = True)[0]          
 
 
 def getPMs(projection, myfilter):
     totalETBs = numETBs("", projection)
     return 0
 
-# for projection in combis.keys():
-#     projFilterDict.update(returnProjFilterDict(projection))
-# print(projFilterDict)
-#
 
-
-# compute all filters, additional partial matches and 
-
-# compute additional pms for configuration of filters
-# compute savings of an additional eventtype given a configuation 
+def returnAdditionalFilterDict():
+    additional = {}
+    for i in projrates.keys():
+      additional[i] = {}
+      myrate = projrates[i][1] * getNumETBs(i)
+      for k in i.leafs():
+          if getDecomposedTotal([k], i) < myrate:
+              additional[i][k] = getDecomposed([k], i)
+    return additional

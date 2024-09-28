@@ -68,7 +68,7 @@ def get_current_section(line):
 
 def extract_network_node(line):
     if line.find('[')!=-1:
-        return list(map(int, line[line.find('[')+1:line.find(']')].split(", ")))
+        return list(map(float, line[line.find('[')+1:line.find(']')].split(", ")))
 
 
 def extract_node_events_produced(output_rates, current_node):

@@ -6,13 +6,14 @@ from helper import *
 import copy
 from itertools import *
 from parse_network import * 
+import numpy as np
 
 class Tree():
     
     def __eq__(self, other): 
         if  isinstance(other, PrimEvent) and isinstance(self, PrimEvent):
             return self.evtype == other.evtype 
-        elif (isinstance(self, AND) and isinstance(other, AND)) or (isinstance(self, SEQ) and isinstance(other, SEQ)):
+        elif (isinstance(self, AND) and isinstance(other, AND)) or (isinstance(self, SEQ) and isinstance(other, SEQ)) or (isinstance(self, NSEQ) and isinstance(other, NSEQ)):
             if len(self.children) != len(other.children):
                 return False
             for i in self.children:
@@ -23,7 +24,7 @@ class Tree():
                 mycount = other.children.count(i)
                 if not i in self.children or self.children.count(i) != mycount :
                     return False
-            if isinstance(self, SEQ) and isinstance(other, SEQ):
+            if (isinstance(self, SEQ) and isinstance(other, SEQ)) or (isinstance(self, NSEQ) and isinstance(other, NSEQ)) :
                 truelist = [1 for x in range(len(self.children)) if str(self.children[x]) == str(other.children[x])]
                 if sum(truelist) == len(self.children):                    
                         return True
@@ -35,7 +36,7 @@ class Tree():
     def __hash__(self):
         return hash(str(self))
     def __len__(self):
-        return len(self.children) #orleafs?
+        return len(self.leafs()) #orleafs?
     
     def isleaf(self, node):
         if not hasattr(node,'children'): 
@@ -119,6 +120,7 @@ class Tree():
             """
             Return projection for given query and set of leafs (primitive event types of query).
             """
+     
             subop = copy.deepcopy(self)   
             if len(nodes) == 1:
                 nodes = nodes[0]
@@ -225,8 +227,6 @@ class Tree():
        
         otherchildren = list(map(lambda x: filter_numbers(x),other.leafs()))
         
-        
-        
         if not set(otherchildren).issubset(set(mychildren)):
             return False
          
@@ -244,7 +244,66 @@ class Tree():
         return True
             
             
+    def stripKL_simple(self):
+        me = copy.deepcopy(self)
+        nodes = me.getnodes()
+        for i in nodes:
+            if isinstance(i, KL):                
+                myparent = me.getparent(i)
+                myind =  myparent.children.index(i)
+                newchildren = [x for x in myparent.children ] 
+                newchildren[myind] =  i.children[0]
+                myparent.children = newchildren
+        return me
+    
+    def strip_NSEQ(self):
+        me = copy.deepcopy(self)
+        nodes = me.getnodes()
+        for i in nodes:
+            if isinstance(i, NSEQ):                
+                myparent = me.getparent(i)
+                myind =  myparent.children.index(i)
+                newchildren = [x for x in myparent.children ] 
+                newme = SEQ()
+                newme.children = copy.deepcopy(i.children)
+                newchildren[myind] =  newme
+                myparent.children = newchildren
+        return me
+    
+    
+    def get_original(self, wl):
+        for query in wl:
+            if query.stripKL_simple() == self:
+                return query
+        return self
+    
+    def get_negated(self):
+        negated = []
+        for i in self.getnodes():
+            if isinstance(i, NSEQ):    
+                negated.append(i.children[1])
+        return negated 
+    
+    def hasNegation(self):
+        if self.get_negated():
+            return True
+        else:
+            return False
         
+    def hasKleene(self):
+        if self.kleene_components():
+            return True
+        else:
+            return False
+        
+    def get_context(self, negated):
+        for i in self.getnodes():
+            if isinstance(i,NSEQ) and negated in i.children:
+                return [i.children[0]] + [i.children[2]]
+    
+    def kleene_components(self):
+        return [x.children[0] for x in self.getnodes() if isinstance(x, KL)]
+               
 
 class AND(Tree):
     def __init__ (self, *children):
@@ -285,6 +344,46 @@ class SEQ(Tree):
         for i in self.children:
             rate *= i.evaluate()
         return rate
+    
+class KL(Tree):
+    def __init__ (self, *children):        
+        self.children = children
+        self.mytype = 'KL'
+        
+    def __str__(self):
+        s = "KL("
+        for i in self.children:            
+            s = s + str(i) + ", "
+        s = s[:-2]
+        s = s + ")"            
+        return s
+    
+    def evaluate(self): 
+        # rate = 1
+        # for i in self.children:
+        #     rate *= 2^(i.evaluate())
+        print(self.stripKL_simple())
+        return self.stripKL_simple().evaluate()
+    
+class NSEQ(Tree):
+    def __init__ (self, *children):        
+        self.children = children
+        self.mytype = 'NSEQ'
+        
+    def __str__(self):
+        s = "NSEQ("
+        for i in self.children:            
+            s = s + str(i) + ", "
+        s = s[:-2]
+        s = s + ")"            
+        return s
+    
+    def evaluate(self): 
+        if len(self.children) != 3:
+            return np.inf
+        else:
+            return self.children[0].evaluate() * self.children[2].evaluate()
+
 
 class PrimEvent(Tree):
     def __init__ (self, evtype):
@@ -301,5 +400,14 @@ class PrimEvent(Tree):
     def evaluate(self):
         return rates[filter_numbers(self.evtype)]
 
+#print(SEQ(KL(AND(PrimEvent(('A')))), KL(SEQ(PrimEvent('B'), KL(PrimEvent('D'))))).stripKL_simple())
+
+q = AND(PrimEvent('A'), SEQ(KL(PrimEvent('E')),  NSEQ(PrimEvent('B'), PrimEvent('D'), PrimEvent('E'))), PrimEvent('F'))
 
 
+
+negated = NSEQ(PrimEvent('B'), PrimEvent('D'), PrimEvent('E')).get_negated()[0]
+#äprint(q.stripKL_simple().evaluate())
+#print(q)
+#print(q.strip_NSEQ())
+#print(q.kleene_components()[0])

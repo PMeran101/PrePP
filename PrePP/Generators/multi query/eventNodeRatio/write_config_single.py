@@ -4,6 +4,9 @@
 Created on Thu Sep 16 15:26:50 2021
 
 @author: samira
+
+Write input file for single-selectivity generator.
+Single selectivities are used for estimating the costs of different output selectors.
 """
 import pickle
 from tree import *
@@ -24,14 +27,11 @@ for i in range(len(nw)):
     f.write(mystring)
 f.write("\nqueries\n")
 for query in wl:
-    f.write(str(query)+"\n")
+    query = query.strip_NSEQ()
+    f.write(str(query.stripKL_simple())+"\n")
 f.write("\nmuse graph\n")
 f.write("SELECT SEQ(A, B, C, D, E) FROM AND(B, SEQ(A, E, F)); I ON {1, 2, 4, 6, 7, 8, 9}/n(I)\n")
 f.write("\nselectivities\n")
 f.write(str(selectivities))
 
 f.close()
-
-# #open and read the file after the appending:
-# f = open("config_single_selectivities.txt", "r")
-# print(f.read()) 

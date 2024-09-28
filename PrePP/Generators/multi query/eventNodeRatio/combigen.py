@@ -4,8 +4,12 @@
 Created on Fri Aug 27 14:16:13 2021
 
 @author: samira
+
+Generate combination, initial output selectors for query workload and network.
+
 """
 import sys
+import random
 from generate_projections import *
 import time 
 numberCombis = 0
@@ -16,15 +20,20 @@ projFilterDict =  {}
 for proj in projlist:
     projFilterDict.update(returnProjFilterDict(proj))    
 
-def optimisticTotalRate(projection): # USE FILTERED RATE FOR ESTIMATION 
+def optimisticTotalRate(projection, *noFilterParam): # USE FILTERED RATE FOR ESTIMATION 
+    noFilter = 0
+    if noFilterParam:
+        noFilter = noFilter[0]
     if projection in projlist: # is complex event        
         for i in projFilterDict.keys():
             if i  == projection: 
                 myproj = i
+               
                 if getMaximalFilter(projFilterDict, myproj):                                                
-                        return getDecomposedTotal(getMaximalFilter(projFilterDict, myproj), myproj)    
+                        return getDecomposedTotal(getMaximalFilter(projFilterDict, myproj, noFilter), myproj)    
                 else:
-                        return projFilterDict[myproj][getMaximalFilter(projFilterDict, myproj)][0] * getNumETBs(myproj) #TODO change
+                        #return projrates[myproj][1]
+                        return projFilterDict[myproj][getMaximalFilter(projFilterDict, myproj, noFilter)][0] * getNumETBs(myproj) #TODO change
     else:
         return rates[projection.leafs()[0]] * len(nodes[projection.leafs()[0]])
 
@@ -100,18 +109,18 @@ def extractMsOptions(query):
     return MsOptions
             
 
-def estimatePC(projection):  # based on primitive inputs, here it should be taken into account that a projection may have a ms placement based on its primitive inputs
-    pc = 0
-    res = returnPartitioning(projection, projection.leafs(), criticalMSTypes)
-    if res: #HAS MS
-        partEvent = res[0]
-        costs = res[1]        
-        for event in [x for x in projection.leafs() if not x == partEvent]:
-            pc += res[1] * rates[event]*len(nodes[event])  
-    else:
-        for event in projection.leafs():
-            pc += longestPath * rates[event]*len(nodes[event])
-    return pc
+# def estimatePC(projection):  # based on primitive inputs, here it should be taken into account that a projection may have a ms placement based on its primitive inputs
+#     pc = 0
+#     res = returnPartitioning(projection, projection.leafs(), criticalMSTypes)
+#     if res: #HAS MS
+#         partEvent = res[0]
+#         costs = res[1]        
+#         for event in [x for x in projection.leafs() if not x == partEvent]:
+#             pc += res[1] * rates[event]*len(nodes[event])  
+#     else:
+#         for event in projection.leafs():
+#             pc += longestPath * rates[event]*len(nodes[event])
+#     return pc
    
 
 
@@ -137,30 +146,28 @@ def getSavings(partType, combination, projection): #OPTIMISTIC TOTAL RATE
     #bestNodeValue = min([sum(x) for x in myAllPairs if x]) #hier lieber average oder global average
     
     #TODO: it is not totalRate but only local Rate that we save for PartType
-    if not projection in wl:
-     
+    if not projection.get_original(wl) in wl: #some intermediate projection
       #  return totalRate(partType) - (len(MSTrees[partType].edges())*  ((sum(list(map(lambda x: totalRate(x), [y for y in combination if not y == partType])))) + optimisticTotalRate(projection)))
          return longestPath * totalRate(partType) - (len(MSTrees[partType].edges())*  (sum(list(map(lambda x: totalRate(x), [y for y in combination if not y == partType])))) + longestPath * optimisticTotalRate(projection))
-    else:
+    
+    elif projection.get_original(wl) in wl and not partType in list(map(lambda x: str(x), projection.get_original(wl).kleene_components())): #sink projection
         return  longestPath * totalRate(partType) - (len(MSTrees[partType].edges())*  sum(list(map(lambda x: totalRate(x), [y for y in combination if not y == partType])))) 
-        
-def getBestChainCombis(query, shared, criticalMSTypes):         
+   
+    elif projection.get_original(wl) in wl and partType in list(map(lambda x: str(x), projection.get_original(wl).kleene_components())): # ms sink query at kleene type 
+        return longestPath * totalRate(partType) - (len(MSTrees[partType].edges())*  (sum(list(map(lambda x: totalRate(x), [y for y in combination if not y == partType])))) + longestPath * optimisticTotalRate(projection))
+
+def getBestChainCombis(query, shared, criticalMSTypes, noFilter):         
     myMSDict = MSoptionsPerEvent(query)     
     myprojlist = [x for x in projsPerQuery[query]] # HERE WE NEED TO RESPECT OPERATOR SEMANTIC -> new function
-    
+
     for projection in [x for x in myprojlist]: #trivial combination and ms placement for projections containing two prim events only
-            
             partType = returnPartitioning(projection, projection.leafs(), criticalMSTypes)  
             if partType:                
                 rest = [x for x in projection.leafs() if not x in partType]
                 costs = getSavings(partType[0],[partType[0]] + rest, projection)
-                if costs > 0 :                    
-                    combiDict[projection] = (projection.leafs(), partType, costs)
-                else:
-                    combiDict[projection] = (projection.leafs(), [], 0)
+                combiDict[projection] = (projection.leafs(), partType, costs)
             else:
-                costs = sum(list(map(lambda x: totalRate(x), projection.leafs())))
-                #costs = 0
+                costs = sum(list(map(lambda x: totalRate(x), projection.leafs()))) * longestPath
                 combiDict[projection] = (projection.leafs(), [], 0 - costs)
                     
     
@@ -192,7 +199,7 @@ def getBestChainCombis(query, shared, criticalMSTypes):
 
     return combiDict
 
-def getBestTreeCombiRec(query, projection, mylist, mycombi, mycosts, shared, criticalMSTypes): # atm combinations are generated redundantly and also performance could be improved with a hashtable [ -> the projections with which ABC could be combined in a combination for ABCDE are a subset of the projections AB can be combined with etc. ...]
+def getBestTreeCombiRec(query, projection, mylist, mycombi, mycosts, shared, criticalMSTypes): # atm combinations are generated redundantly and also performance could be improved with a hashtable [ -> the projections with which ABC could be combined in a combination for ABCDE are a subset of the projections AB can be combined...]
     if mylist:
         for i in range(len(sorted(mylist, key = lambda x: len(x.leafs())))): 
             proj = mylist[i]
@@ -203,7 +210,7 @@ def getBestTreeCombiRec(query, projection, mylist, mycombi, mycosts, shared, cri
             
             ##### fill each intermediate combination with primitive events to generate new combination 
             _missingEvents =   list(set(projection.leafs()).difference(set(''.join(map(lambda x: ''.join(x.leafs()), mycombi)))))
-            _missingEvents += mycombi
+            _missingEvents += mycombi 
             getBestTreeCombiRec(query, projection, [], _missingEvents, mycosts, shared, criticalMSTypes)
             
             #exclude redundant combinations
@@ -212,10 +219,10 @@ def getBestTreeCombiRec(query, projection, mylist, mycombi, mycosts, shared, cri
             
             #exclude the projections of the list in which the partitioning input type of proj is element of the leafs
             if proj in combiDict.keys() and  combiDict[proj][1]:
-                partProj = combiDict[proj][1][0]
-                subProjections = [x for x in subProjections if not partProj in x.leafs()]            
-                # exclude case in which part proj of other projection in the list is part of projs leafs
-                subProjections = [x for x in subProjections if not (x in combiDict.keys() and  combiDict[x][1] and  combiDict[x][1][0] in proj.leafs())]
+                 partProj = combiDict[proj][1][0]
+                 subProjections = [x for x in subProjections if not partProj in x.leafs()]            
+                 #exclude case in which part proj of other projection in the list is part of projs leafs
+                 subProjections = [x for x in subProjections if not (x in combiDict.keys() and  combiDict[x][1] and  combiDict[x][1][0] in proj.leafs())]
             
             #TODO -> Check on Paper and check Implementation carefully
             # exclude subprojections in which the events covered by multi-sink placement are a subset of those events covered by the projections in the combination so far
@@ -270,31 +277,53 @@ def costsOfCombination(projection, mycombi, shared, criticalMSTypes): # here is 
                 
        #if multiple projections share the same input, add a little bit of that inputs rate to simulate later sharing oportunities -> extend myMSTypes to dictionary   
        mycosts += eventSharing(projection, mycombi, mycosts, shared) # rates of event types input to multiple multi-sink placement in the combination are shared, which should be accounted for here
-             
+       
+       #TODO: this might be stupid in the case of multiquery
+       MSChildren = sum([combiDict[x][1] if len(x) > 1 else [x] for x in mycombi ],[])           
+       if (len(MSChildren) != len(mycombi) and not partEvent):
+               mycosts =  -np.inf
+           
+       
        return (mycosts, partEvent) 
 
-def eventSharing(projection, mycombi, mycosts, shared): # output costs of inputs of multi-sink placements that are shared between multiple projections of the combination
+# def eventSharing_old(projection, mycombi, mycosts, shared): 
+#     # output costs of inputs of multi-sink placements that are shared between multiple projections of the combination
     
-    costs = 0
-    # for each projection in mycombi, get all SIS events and generate Dict
-    mySiSEvents =  sum([allSiSEvents(x) for x in mycombi if x in combiDict.keys()], [])
-    SiSDict =  {x : mySiSEvents.count(x) for x in set(mySiSEvents)}  
-    mySubProjections = sum([allAncestors(x, combiDict[x][0]) for x in mycombi if x in combiDict.keys()], [])
-    mySubProjections += [x for x in mycombi if x in combiDict.keys()]
-    SiSDict.update({x :  mySubProjections.count(x) for x in set(mySubProjections)})
+#     costs = 0
+#     # for each projection in mycombi, get all SIS events and generate Dict
+#     mySiSEvents =  sum([allSiSEvents(x) for x in mycombi if x in combiDict.keys()], [])
+#     SiSDict =  {x : mySiSEvents.count(x) for x in set(mySiSEvents)}  
+#     mySubProjections = sum([allAncestors(x, combiDict[x][0]) for x in mycombi if x in combiDict.keys()], [])
+#     mySubProjections += [x for x in mycombi if x in combiDict.keys()]
+#     SiSDict.update({x :  mySubProjections.count(x) for x in set(mySubProjections)})
     
-    #list containing all projections and primitive event types, that are input to single-sink placements for queries for which combination already computed
-    globalSiSEvents = []   
-    if shared:  
-        globalSiSEvents = sum([allSiSEvents(x) for x in wl if x!= projection and x in combiDict.keys()],[])  
-        globalSiSEvents += sum([allAncestors(x, combiDict[x][0]) for x in wl if x!= projection and x in combiDict.keys()],[]) #sharedSubprojections         
+#     #list containing all projections and primitive event types, that are input to single-sink placements for queries for which combination already computed
+#     globalSiSEvents = []   
+#     if shared:  
+#         globalSiSEvents = sum([allSiSEvents(x) for x in wl if x!= projection and x in combiDict.keys()],[])  
+#         globalSiSEvents += sum([allAncestors(x, combiDict[x][0]) for x in wl if x!= projection and x in combiDict.keys()],[]) #sharedSubprojections         
             
-    for event in SiSDict.keys():
-        if event in globalSiSEvents: # for multi-query scenario
-            costs += totalRate(event) * longestPath * SiSDict[event]
-        else:
-            costs += totalRate(event) * (SiSDict[event] - 1) * longestPath #TODO prefer something about the tree edges
+#     for event in SiSDict.keys():
+#         if event in globalSiSEvents: # for multi-query scenario
+#             costs += totalRate(event) * longestPath * SiSDict[event]
+#         else:
+#             costs += totalRate(event) * (SiSDict[event] - 1) * longestPath #TODO prefer something about the tree edges
    
+#     return costs
+
+
+def eventSharing(projection, mycombi, mycosts, shared): 
+    # output costs of inputs of multi-sink placements that are shared between multiple projections of the combination
+    costs = 0
+    # get for the sub-graph representing the combination of each projection in mycombi the ms placed sub-projections
+    myInputsMSProjs = {}
+    for proj in [x for x in mycombi if len(x) > 1] + [y for y in wl if y in combiDict.keys()]: # check sharing with already processed other queries
+        myInputsMSProjs[proj] = [x for x in allAncestors(proj, combiDict[proj][0]) if combiDict[x][1]] # list of ms ancestors
+        myInputsMSProjs[proj] = list(set(sum([[y for y in combiDict[x][0] if not y == combiDict[x][1][0]] for x in myInputsMSProjs[proj]], [])))    
+    myInputs = set(sum(list(myInputsMSProjs.values()),[]))
+    totalInputs = sum(list(myInputsMSProjs.values()),[])
+    for event in myInputs:
+            costs += totalRate(event) * longestPath * totalInputs.count(event)   
     return costs
 
 
@@ -302,8 +331,7 @@ def sharedAncestorsCost(projection, mycombi, partEvent): #for each partitioning 
     costs = 0
 
     if partEvent:
-       partEvent = [partEvent[0]]
-       
+       partEvent = [partEvent[0]]       
 
     partTypes =  sum([allMSTypes(x) for x in mycombi if len(str(x)) > 1] + [partEvent] ,[])
 
@@ -340,6 +368,7 @@ def allSiSEvents(projection):
 def allMSTypes(projection):    
     if projection in combiDict.keys():
         MSTypes = [combiDict[x][1][0] for x in allAncestors(projection, combiDict[projection][0]) + [projection] if x in combiDict.keys() and combiDict[x][1]]
+      
         return [x for x in list(set(MSTypes)) if len(str(x)) == 1] # quatsch, trees müssen aus output von partproj raus
     else:
         return []
@@ -366,15 +395,11 @@ def globalPartitioningOK(projection, combination):     #TODO: current version ov
     myMSTypes = sum([allMSTypes(x) for x in combination],[])
     myMSTypes = set([x for x in myMSTypes if myMSTypes.count(x) > 1]) # only partprojs used multiple times can be problematic
     for etype in set(myMSTypes):
+        
         myMSDict[etype] = [x for x in ancestors if combiDict[x][1] and etype in combiDict[x][1]]
         myInputs = [x for x in list(set(sum([combiDict[y][0] for y in myMSDict[etype]],[]))) if not x == etype]
         mycosts = sum(map(lambda x: totalRate(x), myInputs)) * len(MSTrees[etype].edges())
-        # if projection == wl[3]:
-        #     print(".............")
-        #     print(etype)
-        #     print(longestPath * totalRate(etype))
-        #     print(mycosts)
-
+        
         if longestPath * totalRate(etype) < mycosts:
             additionalCriticals.append(etype)
        
@@ -385,7 +410,7 @@ def globalPartitioningOK(projection, combination):     #TODO: current version ov
    
 
 def getExpensiveProjs(criticals):  # only on criticalTypes
-    allProjs = sum([allAncestors(x, combiDict[x][0]) for x in wl], [])
+    allProjs = sum([allAncestors(x.stripKL_simple(), combiDict[x.stripKL_simple()][0]) for x in wl], [])
     allMSProjs = [x for x in allProjs if combiDict[x][1] and combiDict[x][1][0] in criticals]
     
     #only if projection is input to single sink (or multisink?) 
@@ -440,34 +465,37 @@ def plotCombi(combi):
 
 def main():
     criticalMSTypes= []
-    iteration = 0
+    noFilter = 0
     shared = 1
     if len(sys.argv) > 1: 
-        shared = int(sys.argv[1])
-    if len(sys.argv) > 2: 
-        iteration = int(sys.argv[1])
+        noFilter = int(sys.argv[1])
+
         
     
     start_time = time.time()
-    for query in sorted(wl, key = (lambda x: len(projsPerQuery[x])), reverse = True): #start with queries having the least projections, try other sortings...
-        #print("QUERY: " + str(query))
-        getBestChainCombis(query, shared, criticalMSTypes)
-        ###
-        #criticalMSTypes += allSiSEvents(query)# update sis placed projections here already
+    #random.shuffle(wl)
+    for query in sorted(wl, key = (lambda x: len(projsPerQuery[x.stripKL_simple()])), reverse = True): #start with queries having the least projections, try other sortings...
+ 
+        query = query.stripKL_simple()
+        getBestChainCombis(query, shared, criticalMSTypes, noFilter)
+        criticalMSTypes += allSiSEvents(query)# update sis placed projections here already
     end_time = time.time()
     
     combigenTime = round(end_time - start_time,2)
      
-    globalMSTypes   = set(sum([allMSTypes(x) for x in wl],[]))
-    print("potentialMSTypes:  "  + str(globalMSTypes))
-    globalSiSTypes  = set(sum([allSiSEvents(x) for x in wl],[]))
-    print("globalSiSTypes:  "  + str(globalSiSTypes))
+    globalMSTypes   = set(sum([allMSTypes(x.stripKL_simple()) for x in wl],[]))
+    #print("potentialMSTypes:  "  + str(globalMSTypes))
+    globalSiSTypes  = set(sum([allSiSEvents(x.stripKL_simple()) for x in wl],[]))
+    # print("globalSiSTypes:  "  + str(globalSiSTypes))
     criticalMSTypes = list(set(globalMSTypes).intersection(set(globalSiSTypes)))
-    criticalMSTypes += globalPartitioningOK(wl[0], wl) # add parttypes to ciritcalMSTypes that exceed global threshold
+    
+ #   criticalMSTypes += globalPartitioningOK(wl[0], wl) # add parttypes to ciritcalMSTypes that exceed global threshold
+    
     # check if critical MSTypes share inputs with other MS placements in their SiS Projections
 
     print("critical Types " + str(criticalMSTypes))
-    print(globalPartitioningOK(wl[0], wl))
+   # print(globalPartitioningOK(wl[0], wl))
+   
     # use globalPartitioningOK in order to identify more critical MS Types
     
     # use getExpensiveProjs to identify cases in which although critical an MS placement is superior over a Sis placement due to the outrate of a projection
@@ -493,9 +521,10 @@ def main():
     curcombi = {}
     
             
-    for i in range(len(wl)):        
-        if wl[i] in combiDict.keys():
-            curcombi.update(unfold_combi(wl[i], combiDict[[wl[i]][0]][0]))    
+    for i in range(len(wl)):   
+        query = wl[i].stripKL_simple()
+        if query in combiDict.keys():
+            curcombi.update(unfold_combi(query, combiDict[[query][0]][0]))    
 
  
     mycombi = curcombi
@@ -509,7 +538,7 @@ def main():
     print("time: " + str(end_time - start_time))   
     print(numberCombis)
      
-    getExpensiveProjs(criticalMSTypes)
+   # getExpensiveProjs(criticalMSTypes)
     
     with open('curcombi',  'wb') as newcombi:
         pickle.dump(mycombi, newcombi)
